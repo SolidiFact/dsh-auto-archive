@@ -1,0 +1,5 @@
+# Loaded when this package is installed as a dsh bundle:
+#   dsh plugin --profile web add @solidifact/dsh-auto-archive
+- insert:
+    - id: auto-archive
+      name: '@solidifact/dsh-auto-archive'

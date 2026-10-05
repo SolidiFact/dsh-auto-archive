@@ -53,24 +53,44 @@ A dry run on a real install with 769 sessions (dsh 0.1.7-rc.2):
 
 ## Install
 
-Tested with dsh 0.1.7-rc.2.
+Tested with dsh 0.1.7-rc.2. Use the profile you run; these examples use `web`.
 
-1. Copy `index.mjs` into your dsh web profile folder as `auto-archive.mjs`
-   (for example `~/.dsh/profiles/web/auto-archive.mjs`).
-2. Add it to that profile's `cordis.patch.yml`. To see what it would do first, start with a
-   dry run that also makes one pass a minute after dsh starts:
+```bash
+dsh plugin --profile web add @solidifact/dsh-auto-archive
+```
 
-   ```yaml
-   - insert:
-       - id: auto-archive
-         name: './auto-archive.mjs'
-         config:
-           dryRun: true
-           passOnStart: true
-   ```
+**See what it would do first.** Before restarting dsh, put this in the profile's own
+`~/.dsh/profiles/web/cordis.patch.yml` (replacing the empty `[]` if that is all it holds):
 
-3. Restart dsh web, wait a minute, and read the last line of
-   `~/.dsh/auto-archive/ledger.jsonl`. When the list looks right, remove the `config:` block.
+```yaml
+- id: auto-archive
+  config:
+    dryRun: true
+    passOnStart: true
+```
+
+Restart dsh web, wait a minute, and read the last line of
+`~/.dsh/auto-archive/ledger.jsonl`. It lists every session it would archive and how many it
+kept, and why. When the list looks right, remove those lines; from then on it archives
+each night.
+
+To remove it:
+
+```bash
+dsh plugin --profile web remove @solidifact/dsh-auto-archive
+```
+
+**Without npm:** copy `index.mjs` into the profile folder as `auto-archive.mjs` and add it
+to that profile's `cordis.patch.yml` (drop the `config:` lines once the dry run looks right):
+
+```yaml
+- insert:
+    - id: auto-archive
+      name: './auto-archive.mjs'
+      config:
+        dryRun: true
+        passOnStart: true
+```
 
 ## Settings
 
