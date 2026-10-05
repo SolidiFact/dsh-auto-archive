@@ -1,15 +1,38 @@
 {
-  "name": "dsh-auto-archive",
+  "name": "@solidifact/dsh-auto-archive",
   "version": "0.1.0",
   "description": "dsh web plugin: archive finished dsh sessions that have been idle for three weeks, once a night",
   "type": "module",
   "main": "index.mjs",
   "exports": "./index.mjs",
-  "files": ["index.mjs", "README.md", "LICENSE"],
-  "scripts": { "test": "node --test" },
-  "keywords": ["dsh", "deepseek-harness", "dsh-plugin", "archive"],
+  "files": [
+    "index.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "archive"
+  ],
   "author": "SolidiFact",
   "license": "Apache-2.0",
-  "private": true,
-  "engines": { "node": ">=22" }
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SolidiFact/dsh-auto-archive.git"
+  },
+  "homepage": "https://github.com/SolidiFact/dsh-auto-archive#readme",
+  "bugs": {
+    "url": "https://github.com/SolidiFact/dsh-auto-archive/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
