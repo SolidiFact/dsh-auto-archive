@@ -1,0 +1,54 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1' # weekly, so a new dsh release that breaks the plugin is caught
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --test
+
+  attaches-to-dsh:
+    # Installs this checkout into a fresh dsh web profile and starts dsh, then checks the
+    # plugin attached to the internals it hooks rather than warning that they moved.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: [latest, alpha]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dsh (${{ matrix.dsh }}) and pnpm
+        run: npm install -g @deepseek-ai/dsh@${{ matrix.dsh }} pnpm && dsh --version
+      - name: Install the plugin into a fresh web profile
+        run: |
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          dsh plugin --profile web add "$GITHUB_WORKSPACE"
+      - name: Start dsh and wait for the plugin to attach
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          dsh web --no-open --host 127.0.0.1 --port 0 > dsh.log 2>&1 &
+          for i in $(seq 1 60); do
+            if grep -q '\[auto-archive\] ' dsh.log; then echo "attached:"; grep '\[auto-archive\] ' dsh.log; exit 0; fi
+            if grep -q 'auto-archive:.*\(no \|nothing will\)' dsh.log; then echo "did not attach:"; grep 'auto-archive' dsh.log; exit 1; fi
+            sleep 2
+          done
+          echo "no word from the plugin in 120 s:"; cat dsh.log; exit 1

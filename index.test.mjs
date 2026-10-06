@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  apply, decide, due, lastCompletedDay, localDay, runPass, titleOf, unfinishedReason, DEFAULTS,
+  apply, decide, due, inFolders, lastCompletedDay, localDay, nightToRestore, readLedger, restoredSessions, runPass, runRestore, titleOf, unfinishedReason, DEFAULTS,
 } from './index.mjs'
 
 // --- Fixtures shaped like dsh's own session-list rows. ---
@@ -81,6 +81,11 @@ function fakeRegistry ({ archived = [], pinned = [], favorites, refuse = [] } = 
     archivedSessionIds: [...archived],
     pinnedSessionIds: [...pinned],
     calls: [],
+    unarchived: [],
+    async unarchiveSession (id) {
+      r.unarchived.push(id)
+      r.archivedSessionIds = r.archivedSessionIds.filter((x) => x !== id)
+    },
     async archiveSession (id, options) {
       r.calls.push([id, options])
       if (refuse.includes(id)) throw new Error('workspace/session-active')
@@ -181,4 +186,60 @@ test('apply leaves dsh alone when the services it needs are missing', () => {
   const warnings = []
   apply({ sessionController: {}, workspaceRegistry: {}, logger: { warn: (m) => warnings.push(m) }, on () {} })
   assert.equal(warnings.length, 1)
+})
+
+// --- Settings: folders never archived, and empty sessions. ---
+
+test('sessions in an excluded folder, or inside one, are kept', () => {
+  const f = facts({ excludeFolders: ['/work/keep', '~/notes'] })
+  assert.equal(decide(row({ cwd: '/work/keep' }), f).reason, 'excluded-folder')
+  assert.equal(decide(row({ cwd: '/work/keep/sub' }), f).reason, 'excluded-folder')
+  assert.equal(decide(row({ cwd: '/work/keeper' }), f).archive, true)
+  assert.equal(inFolders(`${process.env.HOME}/notes/a`, ['~/notes']), true)
+  assert.equal(inFolders(undefined, ['/x']), false)
+})
+
+test('archiveEmpty false keeps empty sessions; the default archives them', () => {
+  const empty = row({ blank: true, projections: undefined })
+  assert.equal(decide(empty, facts()).reason, 'empty-and-idle')
+  assert.equal(decide(empty, facts({ archiveEmpty: false })).reason, 'empty')
+})
+
+// --- Restoring a night. ---
+
+const night = (d, h, ids, extra = {}) => ({ at: new Date(2026, 9, d, h, 40).toISOString(), dryRun: false, scheduled: true, archived: ids.map((id) => ({ id })), ...extra })
+
+test('restore "last" names the most recent night that archived something, ignoring dry runs', () => {
+  const entries = [night(5, 3, ['a']), night(6, 3, ['b', 'c']), night(6, 4, ['d']), { ...night(7, 3, ['z']), dryRun: true }]
+  assert.deepEqual(nightToRestore(entries, 'last'), { night: localDay(new Date(2026, 9, 6)), ids: ['b', 'c', 'd'] })
+  assert.deepEqual(nightToRestore(entries, localDay(new Date(2026, 9, 5))).ids, ['a'])
+  assert.match(nightToRestore(entries, 'yesterday').error, /must be "last" or a date/)
+  assert.match(nightToRestore([], 'last').error, /nothing has been archived/)
+})
+
+test('a night is restored once, even if the setting stays in place', async () => {
+  const registry = fakeRegistry({ archived: ['a', 'b'] })
+  const entries = [night(6, 3, ['a', 'b'])]
+  const first = await runRestore({ registry, entries, which: 'last', now: NOW })
+  assert.deepEqual(first.restored, ['a', 'b'])
+  assert.deepEqual(registry.unarchived, ['a', 'b'])
+  const again = await runRestore({ registry, entries: [...entries, first], which: 'last', now: NOW })
+  assert.equal(again, null)
+  assert.equal(registry.unarchived.length, 2)
+})
+
+test('a restored session is kept until it is used again', () => {
+  const restoredAt = NOW - DAY
+  const restored = restoredSessions([{ at: new Date(restoredAt).toISOString(), restored: ['s1'] }])
+  assert.equal(decide(row(), facts({ restored })).reason, 'restored-by-you')
+  // Used after the restore, then idle for three weeks again: the normal rules apply.
+  const usedLater = row({ updatedAt: restoredAt + 1 })
+  assert.equal(decide(usedLater, facts({ restored, now: restoredAt + 1 + 22 * DAY })).archive, true)
+})
+
+test('readLedger skips torn lines', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'auto-archive-'))
+  const path = join(dir, 'ledger.jsonl')
+  writeFileSync(path, '{"at":"x"}\n{torn\n\n{"at":"y"}\n')
+  assert.deepEqual(readLedger(path).map((e) => e.at), ['x', 'y'])
 })

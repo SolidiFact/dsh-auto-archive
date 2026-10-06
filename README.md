@@ -1,5 +1,7 @@
 # dsh-auto-archive
 
+[![tests](https://github.com/SolidiFact/dsh-auto-archive/actions/workflows/tests.yml/badge.svg)](https://github.com/SolidiFact/dsh-auto-archive/actions/workflows/tests.yml)
+
 A [DeepSeek Harness (dsh)](https://www.npmjs.com/package/@deepseek-ai/dsh) web plugin that
 archives sessions which are finished and have not been used for three weeks, once a night,
 without getting in your way.
@@ -14,7 +16,7 @@ A session is archived only when **all** of these are true:
 - its goal, if it has one, is **complete**: an active, paused or blocked goal keeps it;
 - every to-do item is **completed**;
 - nothing is queued for its next turn;
-- it is not open, not running, not pinned, and not starred in
+- it is not open, not running, not pinned, not in a folder you excluded, and not starred in
   [`@michengai/dsh-archive-manager`](https://github.com/MichengAI/dsh-archive-manager)
   (starring is respected when that plugin is installed);
 - it is a top-level session (a sub-agent's session follows its parent).
@@ -53,7 +55,9 @@ A dry run on a real install with 769 sessions (dsh 0.1.7-rc.2):
 
 ## Install
 
-Tested with dsh 0.1.7-rc.2. Use the profile you run; these examples use `web`.
+Tested with dsh 0.1.7-rc.2 and 0.2.1-alpha.1; every change and a weekly run check it
+still attaches to dsh's `latest` and `alpha` releases. It needs dsh's web profile (the `web`
+examples below) and, like any dsh plugin install, `pnpm` on your PATH.
 
 ```bash
 dsh plugin --profile web add @solidifact/dsh-auto-archive
@@ -94,15 +98,37 @@ to that profile's `cordis.patch.yml` (drop the `config:` lines once the dry run 
 
 ## Settings
 
+Set any of these under the plugin's id in your profile's `cordis.patch.yml`; dsh picks up the
+change without a restart.
+
+```yaml
+- id: auto-archive
+  config:
+    idleDays: 30
+    excludeFolders: ['~/work/client-a']
+```
+
 | Setting | Default | |
 |---|---|---|
 | `idleDays` | `21` | days without activity before a finished session is archived |
+| `excludeFolders` | `[]` | project folders whose sessions are never archived (a folder inside one counts too) |
+| `archiveEmpty` | `true` | archive sessions that were opened and never used |
 | `runAt` | `"03:30"` | local time the nightly window opens |
 | `windowHours` | `2` | how long the window stays open |
-| `maxPerRun` | `200` | most sessions archived in one night |
+| `maxPerRun` | `200` | most sessions archived in one night (oldest first; the rest wait) |
 | `dryRun` | `false` | decide and record, archive nothing |
 | `passOnStart` | `false` | one extra pass a minute after dsh starts |
+| `restore` | none | `"last"` or a night as `"YYYY-MM-DD"`: put back what that night archived (below) |
 | `ledger` | `~/.dsh/auto-archive/ledger.jsonl` | where each night is recorded |
+
+## Getting sessions back
+
+- **A whole night:** set `restore: "last"` (or the night's date). Within a few seconds every session
+  that night archived is back, and the ledger records it. Each night is restored once, so leaving
+  the setting in place does nothing more. A restored session is never archived again until you have
+  used it; after that the normal rules apply.
+- **One session:** dsh's own **Settings → Archived sessions** page, or the Archived tab of
+  `@michengai/dsh-archive-manager` if you use it.
 
 ## Tests
 
