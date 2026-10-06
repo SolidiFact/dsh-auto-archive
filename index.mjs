@@ -41,6 +41,7 @@ export const DEFAULTS = Object.freeze({
   excludeFolders: [], // sessions whose project folder is one of these, or inside one, are never archived
   archiveEmpty: true, // archive sessions that were opened and never used
   restore: null, // "last", or a night as "YYYY-MM-DD": put back what that night archived, once
+  stepTimeoutSeconds: 120, // a pass gives up, and says which step, if one dsh call takes longer
   ledger: join(homedir(), '.dsh', 'auto-archive', 'ledger.jsonl'),
 })
 
@@ -54,6 +55,10 @@ const DAY_MS = 86_400_000
  * @returns a short reason, or null.
  */
 export function unfinishedReason (values) {
+  // dsh shows a session's goal and to-dos only when the plugins that record them are loaded. A row
+  // without them is not "nothing unfinished"; it is "cannot tell", and that keeps the session.
+  if (!Object.hasOwn(values ?? {}, 'goal')) return 'goal-unknown'
+  if (!Object.hasOwn(values ?? {}, 'todos')) return 'todos-unknown'
   const phase = values?.goal?.goal?.phase
   if (phase !== undefined && phase !== 'complete') return `goal-${phase}`
   const todos = values?.todos
@@ -117,6 +122,19 @@ export function titleOf (row) {
 
 // --- One pass: read the list, decide every row, archive what qualifies. ---
 
+/** Raised when one dsh call in a pass takes longer than its limit. */
+export class StepTimeout extends Error {}
+
+/**
+ * Wait for a dsh call, but no longer than `ms`. The call itself is not cancelled (dsh offers no way
+ * to), but the pass stops waiting, records which step stuck, and the next night can try again.
+ */
+export function within (ms, promise, step) {
+  let timer
+  const limit = new Promise((_, reject) => { timer = setTimeout(() => reject(new StepTimeout(`${step} did not answer within ${ms / 1000} s`)), ms) })
+  return Promise.race([Promise.resolve(promise), limit]).finally(() => clearTimeout(timer))
+}
+
 /**
  * Run one pass.
  * @param deps - { list:()=>Promise<rows>, registry, isOpen:(id)=>boolean, now:number, settings }.
@@ -124,13 +142,20 @@ export function titleOf (row) {
  */
 export async function runPass ({ list, registry, isOpen, now, settings, restored = new Map() }) {
   const entry = { at: new Date(now).toISOString(), dryRun: settings.dryRun, idleDays: settings.idleDays }
-  const rows = await list()
+  const limit = (settings.stepTimeoutSeconds ?? DEFAULTS.stepTimeoutSeconds) * 1000
+  let rows
+  try {
+    rows = await within(limit, list(), 'the session list')
+  } catch (error) {
+    if (error instanceof StepTimeout) return { ...entry, skipped: error.message }
+    throw error
+  }
   if (rows.some((r) => r.running)) return { ...entry, skipped: 'a session is running' }
 
   let favorites = []
   if (typeof registry.favoriteSessions === 'function') {
     try {
-      favorites = (await registry.favoriteSessions()).favoriteSessionIds ?? []
+      favorites = (await within(limit, registry.favoriteSessions(), 'the starred-session list')).favoriteSessionIds ?? []
     } catch (error) {
       // Stars that cannot be read are not "no stars": skip the night rather than guess.
       return { ...entry, skipped: `could not read starred sessions: ${String(error)}` }
@@ -161,16 +186,20 @@ export async function runPass ({ list, registry, isOpen, now, settings, restored
 
   const archived = []
   const failed = []
+  let stoppedEarly
   for (const row of batch) {
     // Re-check against the registry and open sessions as they are now, not as they were.
     if (!decide(row, facts()).archive) { kept['changed-during-pass'] = (kept['changed-during-pass'] ?? 0) + 1; continue }
     const record = { id: row.sessionId, title: titleOf(row), lastActivity: new Date(row.updatedAt).toISOString() }
     if (settings.dryRun) { archived.push(record); continue }
     try {
-      await registry.archiveSession(row.sessionId) // never { stopActivity: true }
+      await within(limit, registry.archiveSession(row.sessionId), `archiving ${row.sessionId}`) // never { stopActivity: true }
       archived.push(record)
     } catch (error) {
       failed.push({ id: row.sessionId, error: String(error?.message ?? error) })
+      // A stuck archive call means dsh's workspace is not answering; asking again would only queue
+      // more behind it. Stop the night here.
+      if (error instanceof StepTimeout) { stoppedEarly = error.message; break }
     }
   }
   return {
@@ -181,6 +210,7 @@ export async function runPass ({ list, registry, isOpen, now, settings, restored
     left_for_next_night: Math.max(0, candidates.length - batch.length),
     kept,
     failed,
+    ...(stoppedEarly ? { stoppedEarly } : {}),
   }
 }
 
@@ -231,7 +261,7 @@ function summary (e) {
   const kept = Object.entries(e.kept).map(([k, v]) => `${k} ${v}`).join(', ')
   return `${e.dryRun ? 'dry run, would archive' : 'archived'} ${e.archived.length} of ${e.considered} sessions` +
     (e.left_for_next_night ? ` (${e.left_for_next_night} left for the next night)` : '') +
-    (e.failed.length ? `, ${e.failed.length} failed` : '') + `; kept: ${kept}`
+    (e.failed.length ? `, ${e.failed.length} failed` : '') + (e.stoppedEarly ? `; stopped early: ${e.stoppedEarly}` : '') + `; kept: ${kept}`
 }
 
 // --- Restoring: put back what one night archived, and keep it from being archived again. ---
@@ -316,8 +346,9 @@ export function apply (ctx, config = {}) {
   let lastDay = lastCompletedDay(settings.ledger)
 
   const pass = async (scheduled) => {
-    if (running) return
+    if (running) { console.warn('[auto-archive] a pass is still running from before; not starting another'); return }
     running = true
+    console.log(`[auto-archive] pass started${scheduled ? '' : ' (on start)'}`)
     try {
       const entry = await runPass({ list: () => list.list(), registry, isOpen, now: Date.now(), settings, restored: restoredSessions(readLedger(settings.ledger)) })
       entry.scheduled = scheduled

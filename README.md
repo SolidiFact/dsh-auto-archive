@@ -21,7 +21,8 @@ A session is archived only when **all** of these are true:
   (starring is respected when that plugin is installed);
 - it is a top-level session (a sub-agent's session follows its parent).
 
-A session whose state cannot be read is kept. An empty session (opened, never used) has
+A session whose state cannot be read is kept, and so is one whose goal or to-dos this dsh cannot
+show (the plugins that record them are not loaded): "cannot tell" never counts as "finished". An empty session (opened, never used) has
 nothing unfinished, so it is archived once idle.
 
 ## Why it is safe to leave running
@@ -33,6 +34,10 @@ nothing unfinished, so it is archived once idle.
 - **Each session is re-checked just before it is archived**, and dsh is never asked to stop
   work: dsh itself refuses to archive a session with running activity.
 - **Starred sessions it cannot read mean no archiving that night**, not "no stars".
+- **It never waits on dsh forever.** Each call it makes (the session list, the starred list, each
+  archive) has a time limit, two minutes by default. If one runs over, the pass stops, logs which
+  call stuck, and records it in the ledger; a stuck archive call ends the night rather than queueing
+  more behind it.
 - **No more than 200 a night**, oldest first.
 - **Everything it does is written down**: one JSON line per night in
   `~/.dsh/auto-archive/ledger.jsonl`, naming every archived session with its title and last
@@ -118,6 +123,7 @@ change without a restart.
 | `maxPerRun` | `200` | most sessions archived in one night (oldest first; the rest wait) |
 | `dryRun` | `false` | decide and record, archive nothing |
 | `passOnStart` | `false` | one extra pass a minute after dsh starts |
+| `stepTimeoutSeconds` | `120` | how long one dsh call may take before the pass gives up and records it |
 | `restore` | none | `"last"` or a night as `"YYYY-MM-DD"`: put back what that night archived (below) |
 | `ledger` | `~/.dsh/auto-archive/ledger.jsonl` | where each night is recorded |
 

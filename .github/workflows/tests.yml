@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test
+      - run: node --test --test-timeout=10000
 
   attaches-to-dsh:
     # Installs this checkout into a fresh dsh web profile and starts dsh, then checks the

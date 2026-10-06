@@ -1,6 +1,6 @@
 {
   "name": "@solidifact/dsh-auto-archive",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "dsh web plugin: archive finished dsh sessions that have been idle for three weeks, once a night",
   "type": "module",
   "main": "index.mjs",
@@ -12,7 +12,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node --test --test-timeout=10000"
   },
   "keywords": [
     "dsh",

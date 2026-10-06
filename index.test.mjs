@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  apply, decide, due, inFolders, lastCompletedDay, localDay, nightToRestore, readLedger, restoredSessions, runPass, runRestore, titleOf, unfinishedReason, DEFAULTS,
+  apply, decide, due, inFolders, lastCompletedDay, localDay, nightToRestore, readLedger, restoredSessions, runPass, runRestore, StepTimeout, titleOf, unfinishedReason, within, DEFAULTS,
 } from './index.mjs'
 
 // --- Fixtures shaped like dsh's own session-list rows. ---
@@ -242,4 +242,44 @@ test('readLedger skips torn lines', () => {
   const path = join(dir, 'ledger.jsonl')
   writeFileSync(path, '{"at":"x"}\n{torn\n\n{"at":"y"}\n')
   assert.deepEqual(readLedger(path).map((e) => e.at), ['x', 'y'])
+})
+
+// --- Data dsh cannot show is "cannot tell", never "finished". ---
+
+test('a session whose goal or to-do data is missing is kept, not archived', () => {
+  const noGoal = { ...done }; delete noGoal.goal
+  const noTodos = { ...done }; delete noTodos.todos
+  assert.equal(decide(row({ projections: { values: noGoal } }), facts()).reason, 'goal-unknown')
+  assert.equal(decide(row({ projections: { values: noTodos } }), facts()).reason, 'todos-unknown')
+  assert.equal(unfinishedReason({ goal: null, todos: null }), null)
+})
+
+// --- A pass never waits forever. ---
+
+const never = () => new Promise(() => {})
+
+test('within passes a quick answer through and rejects a stuck one with the step named', async () => {
+  assert.equal(await within(1000, Promise.resolve(7), 'x'), 7)
+  await assert.rejects(within(20, never(), 'the session list'), (e) => e instanceof StepTimeout && /the session list did not answer within 0.02 s/.test(e.message))
+})
+
+test('a session list that never answers ends the pass, recorded as skipped', async () => {
+  const e = await runPass({ list: never, registry: fakeRegistry(), isOpen: () => false, now: NOW, settings: settings({ stepTimeoutSeconds: 0.02 }) })
+  assert.match(e.skipped, /the session list did not answer/)
+})
+
+test('a starred list that never answers skips the night', async () => {
+  const registry = fakeRegistry(); registry.favoriteSessions = never
+  const e = await runPass({ list: async () => [row()], registry, isOpen: () => false, now: NOW, settings: settings({ stepTimeoutSeconds: 0.02 }) })
+  assert.match(e.skipped, /could not read starred sessions: .*did not answer/)
+  assert.equal(registry.calls.length, 0)
+})
+
+test('an archive call that never answers stops the night instead of queueing more', async () => {
+  const registry = fakeRegistry(); registry.archiveSession = async (id) => { registry.calls.push([id]); return never() }
+  const rows = [row({ sessionId: 'a', updatedAt: NOW - 60 * DAY }), row({ sessionId: 'b', updatedAt: NOW - 30 * DAY })]
+  const e = await runPass({ list: async () => rows, registry, isOpen: () => false, now: NOW, settings: settings({ stepTimeoutSeconds: 0.02 }) })
+  assert.equal(registry.calls.length, 1)
+  assert.match(e.stoppedEarly, /archiving a did not answer/)
+  assert.deepEqual(e.archived, [])
 })
